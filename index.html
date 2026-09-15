@@ -390,7 +390,7 @@
     </table>
   </div>
 </div>
-
+<audio id="end-audio" src="./exam-end.mp3" preload="auto"></audio>
 <script>
 // 색상 팔레트 (light bg / text color 쌍)
 const COLOR_PALETTE = [
@@ -549,16 +549,32 @@ function updateCountdownDisplay(cIdx) {
     }
   }
 }
+function prepareAudioSession() {
+  try {
+    if ('audioSession' in navigator && navigator.audioSession) {
+      navigator.audioSession.type = 'playback';
+    }
+  } catch (e) {
+    console.log('AudioSession not supported');
+  }
+}
 
+  
 function speak(text) {
+  prepareAudioSession();
+
   if (!window.speechSynthesis) return;
+
   window.speechSynthesis.cancel();
+
   const utter = new SpeechSynthesisUtterance(text);
   utter.lang = 'ko-KR';
   utter.rate = 0.95;
+  utter.volume = 1;
+
   window.speechSynthesis.speak(utter);
 }
-
+  
 // AudioContext 미리 초기화 (iOS 사파리 대응)
 let _audioCtx = null;
 function getAudioCtx() {
@@ -611,11 +627,16 @@ function startCountdown(cIdx) {
       const alertOn = document.getElementById('alert-toggle')?.checked;
       if (alertOn) speak('2분 남았습니다');
     }
-    if (remaining === 0) {
-      clearInterval(cd.interval); cd.interval = null; cd.running = false;
-      beep();
-    }
-  }, 500);
+ if (remaining === 0) {
+  clearInterval(cd.interval);
+  cd.interval = null;
+  cd.running = false;
+
+  const endAlertOn = document.getElementById('beep-toggle')?.checked;
+
+  if (endAlertOn) {
+    speak('시험 종료');
+  }
 }
 
 function pauseCountdown(cIdx) {
@@ -630,6 +651,8 @@ function pauseCountdown(cIdx) {
 function onHybridChange() { render(); }
 
 function startSession(cIdx, sIdx) {
+  prepareAudioSession();
+
   const SESSIONS = getSessions();
   const wasAnyRunningOrDone = SESSIONS.some((_, i) => { const t = getTimer(cIdx, i); return t.running || t.elapsed > 0; });
   SESSIONS.forEach((_, i) => { if (i !== sIdx) stopSession(cIdx, i); });
