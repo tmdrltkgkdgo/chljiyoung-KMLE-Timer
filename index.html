@@ -558,6 +558,31 @@ function prepareAudioSession() {
   }
 }
 
+// 시작·2분·종료 안내에 항상 같은 한국어 음성을 사용
+let selectedKoreanVoice = null;
+
+function getKoreanVoice() {
+  if (selectedKoreanVoice) return selectedKoreanVoice;
+  if (!window.speechSynthesis?.getVoices) return null;
+
+  const voices = window.speechSynthesis.getVoices();
+  const normalizeLang = lang => String(lang || '').replace('_', '-').toLowerCase();
+
+  selectedKoreanVoice =
+    voices.find(voice => normalizeLang(voice.lang) === 'ko-kr' && voice.default) ||
+    voices.find(voice => normalizeLang(voice.lang) === 'ko-kr') ||
+    voices.find(voice => normalizeLang(voice.lang).startsWith('ko')) ||
+    null;
+
+  return selectedKoreanVoice;
+}
+
+// iPhone Safari에서는 음성 목록이 조금 늦게 준비될 수 있음
+if (window.speechSynthesis) {
+  getKoreanVoice();
+  window.speechSynthesis.addEventListener?.('voiceschanged', getKoreanVoice);
+}
+
 function speak(text) {
   prepareAudioSession();
 
@@ -566,8 +591,11 @@ function speak(text) {
   window.speechSynthesis.cancel();
 
   const utter = new SpeechSynthesisUtterance(text);
-  utter.lang = 'ko-KR';
+  const voice = getKoreanVoice();
+  if (voice) utter.voice = voice;
+  utter.lang = voice?.lang || 'ko-KR';
   utter.rate = 0.95;
+  utter.pitch = 1;
   utter.volume = 1;
 
   window.speechSynthesis.speak(utter);
