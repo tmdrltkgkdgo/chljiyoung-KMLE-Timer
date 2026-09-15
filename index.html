@@ -349,6 +349,13 @@
         <span class="toggle-slider"></span>
       </label>
     </div>
+    <div class="hybrid-wrap" title="타이머 실행 중 화면 자동 잠금을 방지합니다">
+      <label for="wake-lock-toggle" id="wake-lock-label">화면 유지</label>
+      <label class="toggle">
+        <input type="checkbox" id="wake-lock-toggle" onchange="onWakeLockChange()" checked>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
     <div class="hybrid-wrap">
       <label for="alert-toggle">🔔 시작</label>
       <label class="toggle">
@@ -499,6 +506,92 @@ let state = {
   caseCD: {}, // { [cIdx]: { timeLimit, elapsed, running, tickStart, twoMinAlerted, interval } }
 };
 
+// 타이머 실행 중 화면이 자동으로 꺼지지 않도록 유지
+let screenWakeLock = null;
+let wakeLockRequestPending = false;
+
+function hasAnyRunningSession() {
+  return Object.values(state.timers).some(timer => timer.running);
+}
+
+function setWakeLockStatus(status) {
+  const label = document.getElementById('wake-lock-label');
+  if (!label) return;
+
+  const labels = {
+    idle: '화면 유지',
+    active: '화면 유지 중',
+    unsupported: '화면 유지 미지원',
+    failed: '화면 유지 실패',
+  };
+  label.textContent = labels[status] || labels.idle;
+}
+
+async function requestScreenWakeLock() {
+  const toggle = document.getElementById('wake-lock-toggle');
+  if (!toggle?.checked || document.visibilityState !== 'visible') return false;
+
+  if (!navigator.wakeLock?.request) {
+    setWakeLockStatus('unsupported');
+    return false;
+  }
+
+  if (screenWakeLock && !screenWakeLock.released) {
+    setWakeLockStatus('active');
+    return true;
+  }
+
+  if (wakeLockRequestPending) return false;
+  wakeLockRequestPending = true;
+
+  try {
+    const lock = await navigator.wakeLock.request('screen');
+    screenWakeLock = lock;
+    setWakeLockStatus('active');
+
+    lock.addEventListener('release', () => {
+      if (screenWakeLock === lock) {
+        screenWakeLock = null;
+        setWakeLockStatus('idle');
+      }
+    });
+    return true;
+  } catch (error) {
+    console.warn('화면 유지 요청 실패:', error);
+    setWakeLockStatus('failed');
+    return false;
+  } finally {
+    wakeLockRequestPending = false;
+  }
+}
+
+async function releaseScreenWakeLock() {
+  const lock = screenWakeLock;
+  screenWakeLock = null;
+
+  try {
+    if (lock && !lock.released) await lock.release();
+  } catch (error) {
+    console.warn('화면 유지 해제 실패:', error);
+  }
+  if (!screenWakeLock) setWakeLockStatus('idle');
+}
+
+function onWakeLockChange() {
+  const enabled = document.getElementById('wake-lock-toggle')?.checked;
+  if (enabled && hasAnyRunningSession()) {
+    requestScreenWakeLock();
+  } else {
+    releaseScreenWakeLock();
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && hasAnyRunningSession()) {
+    requestScreenWakeLock();
+  }
+});
+
 function getCaseCD(cIdx) {
   if (!state.caseCD[cIdx]) state.caseCD[cIdx] = { timeLimit: 720, elapsed: 0, running: false, tickStart: null, twoMinAlerted: false, interval: null };
   return state.caseCD[cIdx];
@@ -583,12 +676,19 @@ if (window.speechSynthesis) {
   window.speechSynthesis.addEventListener?.('voiceschanged', getKoreanVoice);
 }
 
-function speak(text) {
+let activeUtterance = null;
+
+function speak(text, fallbackToBeep = false) {
   prepareAudioSession();
 
-  if (!window.speechSynthesis) return;
+  if (!window.speechSynthesis) {
+    if (fallbackToBeep) beep();
+    return;
+  }
 
-  window.speechSynthesis.cancel();
+  const synth = window.speechSynthesis;
+  synth.cancel();
+  synth.resume?.();
 
   const utter = new SpeechSynthesisUtterance(text);
   const voice = getKoreanVoice();
@@ -598,7 +698,23 @@ function speak(text) {
   utter.pitch = 0.95;
   utter.volume = 1;
 
-  window.speechSynthesis.speak(utter);
+  const clearActiveUtterance = () => {
+    if (activeUtterance === utter) activeUtterance = null;
+  };
+  utter.onend = clearActiveUtterance;
+  utter.onerror = event => {
+    clearActiveUtterance();
+    if (fallbackToBeep && !['canceled', 'interrupted'].includes(event.error)) beep();
+  };
+
+  // 일부 iOS 브라우저에서 발화 객체가 조기 정리되지 않도록 참조 유지
+  activeUtterance = utter;
+  synth.speak(utter);
+
+  // Chrome/Safari가 음성 합성을 일시정지한 경우 한 번 더 재개
+  setTimeout(() => {
+    if (synth.paused) synth.resume?.();
+  }, 100);
 }
 
 // AudioContext 미리 초기화 (iOS 사파리 대응)
@@ -659,7 +775,7 @@ function startCountdown(cIdx) {
       cd.running = false;
 
       const endAlertOn = document.getElementById('beep-toggle')?.checked;
-      if (endAlertOn) speak('시험이 종료되었습니다.');
+      if (endAlertOn) speak('시험이 종료되었습니다.', true);
     }
   }, 500);
 }
@@ -690,6 +806,7 @@ function startSession(cIdx, sIdx) {
   }
   t.running = true;
   t.startAt = Date.now() - t.elapsed * 1000;
+  requestScreenWakeLock();
   const k = caseKey(cIdx, sIdx);
   if (state.intervals[k]) clearInterval(state.intervals[k]);
   state.intervals[k] = setInterval(() => {
@@ -712,6 +829,7 @@ function stopSession(cIdx, sIdx) {
   // 해당 증례에서 실행 중인 세션이 없으면 카운트다운 일시정지
   const anyRunning = getSessions().some((_, i) => getTimer(cIdx, i).running);
   if (!anyRunning) pauseCountdown(cIdx);
+  if (!hasAnyRunningSession()) releaseScreenWakeLock();
   const now = new Date();
   state.logs.push({
     case: state.cases[cIdx].label,
@@ -737,6 +855,7 @@ function resetCurrentCase() {
   cd.elapsed = 0;
   cd.running = false;
   cd.twoMinAlerted = false;
+  if (!hasAnyRunningSession()) releaseScreenWakeLock();
   updateCountdownDisplay(c);
 }
 
@@ -750,6 +869,7 @@ function resetAll() {
     if (cd.interval) clearInterval(cd.interval);
   });
   state.caseCD = {};
+  releaseScreenWakeLock();
   updateCountdownDisplay(state.current);
   render();
 }
