@@ -594,8 +594,8 @@ function speak(text) {
   const voice = getKoreanVoice();
   if (voice) utter.voice = voice;
   utter.lang = voice?.lang || 'ko-KR';
-  utter.rate = 0.95;
-  utter.pitch = 1;
+  utter.rate = 0.90;
+  utter.pitch = 0.95;
   utter.volume = 1;
 
   window.speechSynthesis.speak(utter);
@@ -651,7 +651,7 @@ function startCountdown(cIdx) {
     if (!cd.twoMinAlerted && remaining <= 120 && remaining > 0) {
       cd.twoMinAlerted = true;
       const alertOn = document.getElementById('alert-toggle')?.checked;
-      if (alertOn) speak('2분 남았습니다');
+      if (alertOn) speak('2분 남았습니다.');
     }
     if (remaining === 0) {
       clearInterval(cd.interval);
@@ -659,7 +659,7 @@ function startCountdown(cIdx) {
       cd.running = false;
 
       const endAlertOn = document.getElementById('beep-toggle')?.checked;
-      if (endAlertOn) speak('시험 종료');
+      if (endAlertOn) speak('시험이 종료되었습니다.');
     }
   }, 500);
 }
@@ -686,7 +686,7 @@ function startSession(cIdx, sIdx) {
   // 이 증례에서 처음 시작하는 경우 시작 알림
   if (!wasAnyRunningOrDone) {
     const startAlertOn = document.getElementById('start-alert-toggle')?.checked;
-    if (startAlertOn) speak('시험실 입실');
+    if (startAlertOn) speak('시험실 입실.');
   }
   t.running = true;
   t.startAt = Date.now() - t.elapsed * 1000;
