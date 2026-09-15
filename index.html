@@ -390,7 +390,6 @@
     </table>
   </div>
 </div>
-<audio id="end-audio" src="./exam-end.mp3" preload="auto"></audio>
 <script>
 // 색상 팔레트 (light bg / text color 쌍)
 const COLOR_PALETTE = [
@@ -559,7 +558,6 @@ function prepareAudioSession() {
   }
 }
 
-  
 function speak(text) {
   prepareAudioSession();
 
@@ -574,7 +572,7 @@ function speak(text) {
 
   window.speechSynthesis.speak(utter);
 }
-  
+
 // AudioContext 미리 초기화 (iOS 사파리 대응)
 let _audioCtx = null;
 function getAudioCtx() {
@@ -627,16 +625,15 @@ function startCountdown(cIdx) {
       const alertOn = document.getElementById('alert-toggle')?.checked;
       if (alertOn) speak('2분 남았습니다');
     }
- if (remaining === 0) {
-  clearInterval(cd.interval);
-  cd.interval = null;
-  cd.running = false;
+    if (remaining === 0) {
+      clearInterval(cd.interval);
+      cd.interval = null;
+      cd.running = false;
 
-  const endAlertOn = document.getElementById('beep-toggle')?.checked;
-
-  if (endAlertOn) {
-    speak('시험 종료');
-  }
+      const endAlertOn = document.getElementById('beep-toggle')?.checked;
+      if (endAlertOn) speak('시험 종료');
+    }
+  }, 500);
 }
 
 function pauseCountdown(cIdx) {
