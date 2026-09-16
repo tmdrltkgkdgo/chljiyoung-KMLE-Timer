@@ -93,12 +93,6 @@
     border-radius: 12px; padding: 6px 12px;
   }
   .hybrid-wrap label { font-size: 12px; color: var(--color-text-2); cursor: pointer; white-space: nowrap; }
-  .audio-test-btn {
-    min-height: 34px; padding: 6px 11px; border-radius: 10px;
-    border: 0.5px solid var(--color-border); background: var(--color-surface);
-    color: var(--color-text-2); font: inherit; font-size: 12px; cursor: pointer;
-  }
-  .audio-test-btn:active { transform: translateY(1px); }
   .toggle {
     position: relative; width: 36px; height: 20px; cursor: pointer;
   }
@@ -379,7 +373,6 @@
         <span class="toggle-slider"></span>
       </label>
     </div>
-    <button type="button" class="audio-test-btn" onclick="testVoice()" aria-label="음성 안내 테스트">🔊 음성 테스트</button>
   </div>
 
   <div class="case-tabs" id="case-tabs"></div>
@@ -404,6 +397,7 @@
     </table>
   </div>
 </div>
+<audio id="announcement-player" preload="auto" playsinline></audio>
 <script>
 // 색상 팔레트 (light bg / text color 쌍)
 const COLOR_PALETTE = [
@@ -658,163 +652,64 @@ function prepareAudioSession() {
   }
 }
 
-// 시작·2분·종료 안내에 같은 한국어 음성을 사용한다.
-// Android에서는 voiceschanged 이후 Voice 객체가 교체될 수 있어 URI만 기억한다.
-let selectedKoreanVoiceURI = '';
+const ANNOUNCEMENT_FILES = {
+  start: 'audio/start.mp3',
+  twoMinutes: 'audio/two-minutes.mp3',
+  end: 'audio/end.mp3',
+};
 
-function getKoreanVoice() {
-  if (!window.speechSynthesis?.getVoices) return null;
+let announcementPlayId = 0;
 
-  const voices = window.speechSynthesis.getVoices();
-  const normalizeLang = lang => String(lang || '').replace('_', '-').toLowerCase();
-  const savedVoice = voices.find(voice => voice.voiceURI === selectedKoreanVoiceURI);
-  if (savedVoice) return savedVoice;
-
-  const selectedVoice =
-    voices.find(voice => normalizeLang(voice.lang) === 'ko-kr' && voice.localService && voice.default) ||
-    voices.find(voice => normalizeLang(voice.lang) === 'ko-kr' && voice.localService) ||
-    voices.find(voice => normalizeLang(voice.lang) === 'ko-kr' && voice.default) ||
-    voices.find(voice => normalizeLang(voice.lang) === 'ko-kr') ||
-    voices.find(voice => normalizeLang(voice.lang).startsWith('ko')) ||
-    null;
-
-  selectedKoreanVoiceURI = selectedVoice?.voiceURI || '';
-  return selectedVoice;
-}
-
-// Safari와 Android Chrome 모두 음성 목록이 늦게 준비될 수 있다.
-if (window.speechSynthesis) {
-  getKoreanVoice();
-  window.speechSynthesis.addEventListener?.('voiceschanged', () => {
-    selectedKoreanVoiceURI = '';
-    getKoreanVoice();
-  });
-}
-
-let activeUtterance = null;
-let speechStartTimer = null;
-let speechSequence = 0;
-
-function speak(text, alertPattern = 'single') {
+function playAnnouncement(type) {
   prepareAudioSession();
+  const player = document.getElementById('announcement-player');
+  const file = ANNOUNCEMENT_FILES[type];
+  if (!player || !file) return;
 
-  if (!window.speechSynthesis) {
-    playAlertPattern(alertPattern);
-    return;
+  const playId = ++announcementPlayId;
+  const source = new URL(file, document.baseURI).href;
+  player.pause();
+  if (player.src !== source) {
+    player.src = source;
+    player.load();
   }
+  player.currentTime = 0;
+  player.volume = 1;
+  player.muted = false;
 
-  const synth = window.speechSynthesis;
-  const sequence = ++speechSequence;
-
-  const startSpeaking = () => {
-    if (sequence !== speechSequence) return;
-
-    synth.resume?.();
-    const utter = new SpeechSynthesisUtterance(text);
-    const voice = getKoreanVoice();
-    if (voice) utter.voice = voice;
-    utter.lang = voice?.lang || 'ko-KR';
-    utter.rate = 0.90;
-    utter.pitch = 0.95;
-    utter.volume = 1;
-
-    let started = false;
-    const clearSpeechTimer = () => {
-      if (speechStartTimer) clearTimeout(speechStartTimer);
-      speechStartTimer = null;
-    };
-    const clearActiveUtterance = () => {
-      if (activeUtterance === utter) activeUtterance = null;
-    };
-
-    utter.onstart = () => {
-      started = true;
-      clearSpeechTimer();
-    };
-    utter.onend = () => {
-      clearSpeechTimer();
-      clearActiveUtterance();
-    };
-    utter.onerror = event => {
-      clearSpeechTimer();
-      clearActiveUtterance();
-      if (!started && !['canceled', 'interrupted'].includes(event.error)) {
-        playAlertPattern(alertPattern);
-      }
-    };
-
-    // 발화 객체 참조를 유지하고, 실제 시작되지 않으면 소리 알림으로 대체한다.
-    activeUtterance = utter;
-    synth.speak(utter);
-    speechStartTimer = setTimeout(() => {
-      if (!started && sequence === speechSequence) {
-        synth.cancel();
-        clearActiveUtterance();
-        playAlertPattern(alertPattern);
-      }
-    }, 2200);
-
-    setTimeout(() => synth.resume?.(), 120);
-  };
-
-  // Android Chrome은 cancel() 직후 speak()를 호출하면 새 발화도 취소될 수 있다.
-  if (synth.speaking || synth.pending) {
-    synth.cancel();
-    setTimeout(startSpeaking, 140);
-  } else {
-    startSpeaking();
-  }
-}
-
-// AudioContext 미리 초기화 (iOS 사파리 대응)
-let _audioCtx = null;
-function getAudioCtx() {
-  if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  if (_audioCtx.state === 'suspended') _audioCtx.resume();
-  return _audioCtx;
-}
-// 첫 사용자 동작에서 AudioContext를 활성화한다 (iOS·Android 공통).
-function unlockAudio() {
-  try { getAudioCtx(); } catch(e) {}
-}
-document.addEventListener('pointerdown', unlockAudio, { passive: true });
-document.addEventListener('touchstart', unlockAudio, { passive: true });
-document.addEventListener('keydown', unlockAudio);
-
-function playAlertPattern(pattern = 'end') {
-  try {
-    const ctx = getAudioCtx();
-    const settings = {
-      start: { times: [0], frequency: 660 },
-      twoMin: { times: [0, 0.34], frequency: 740 },
-      end: { times: [0, 0.35, 0.7], frequency: 880 },
-      single: { times: [0], frequency: 780 }
-    }[pattern] || { times: [0], frequency: 780 };
-
-    const times = settings.times;
-    times.forEach(t => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(settings.frequency, ctx.currentTime + t);
-      gain.gain.setValueAtTime(0.7, ctx.currentTime + t);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.28);
-      osc.start(ctx.currentTime + t);
-      osc.stop(ctx.currentTime + t + 0.28);
+  const attempt = player.play();
+  if (attempt?.catch) {
+    attempt.catch(error => {
+      // 파일 전환 직후 재생을 거부한 브라우저에서는 로드 후 한 번 더 시도한다.
+      console.warn('음성 재생 재시도:', error);
+      player.load();
+      setTimeout(() => {
+        if (playId === announcementPlayId) {
+          player.play().catch(retryError => console.error('음성 재생 실패:', retryError));
+        }
+      }, 180);
     });
-  } catch(e) { console.error('audio alert error:', e); }
+  }
 }
 
-function beep() {
-  if (!document.getElementById('beep-toggle')?.checked) return;
-  playAlertPattern('end');
-}
+function primeAnnouncementPlayer() {
+  prepareAudioSession();
+  const player = document.getElementById('announcement-player');
+  if (!player || player.src) return;
 
-function testVoice() {
-  unlockAudio();
-  speak('음성 안내 테스트입니다.', 'single');
+  player.src = new URL(ANNOUNCEMENT_FILES.start, document.baseURI).href;
+  player.load();
+  player.muted = true;
+  const attempt = player.play();
+  if (attempt?.then) {
+    attempt.then(() => {
+      player.pause();
+      player.currentTime = 0;
+      player.muted = false;
+    }).catch(() => {
+      player.muted = false;
+    });
+  }
 }
 
 
@@ -837,7 +732,7 @@ function startCountdown(cIdx) {
     if (!cd.twoMinAlerted && remaining <= 120 && remaining > 0) {
       cd.twoMinAlerted = true;
       const alertOn = document.getElementById('alert-toggle')?.checked;
-      if (alertOn) speak('2분 남았습니다.', 'twoMin');
+      if (alertOn) playAnnouncement('twoMinutes');
     }
     if (remaining === 0) {
       clearInterval(cd.interval);
@@ -845,7 +740,7 @@ function startCountdown(cIdx) {
       cd.running = false;
 
       const endAlertOn = document.getElementById('beep-toggle')?.checked;
-      if (endAlertOn) speak('시험이 종료되었습니다.', 'end');
+      if (endAlertOn) playAnnouncement('end');
     }
   }, 500);
 }
@@ -863,7 +758,6 @@ function onHybridChange() { render(); }
 
 function startSession(cIdx, sIdx) {
   prepareAudioSession();
-  unlockAudio();
 
   const SESSIONS = getSessions();
   const wasAnyRunningOrDone = SESSIONS.some((_, i) => { const t = getTimer(cIdx, i); return t.running || t.elapsed > 0; });
@@ -873,7 +767,8 @@ function startSession(cIdx, sIdx) {
   // 이 증례에서 처음 시작하는 경우 시작 알림
   if (!wasAnyRunningOrDone) {
     const startAlertOn = document.getElementById('start-alert-toggle')?.checked;
-    if (startAlertOn) speak('시험실 입실.', 'start');
+    if (startAlertOn) playAnnouncement('start');
+    else primeAnnouncementPlayer();
   }
   t.running = true;
   t.startAt = Date.now() - t.elapsed * 1000;
